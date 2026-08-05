@@ -1,0 +1,13 @@
+# Virtual environment (installed packages) - can always be recreated from requirements.txt
+venv/
+
+# Python cache files - auto-generated, not real source code
+__pycache__/
+*.pyc
+
+# Jupyter notebook checkpoints - auto-generated backup copies
+.ipynb_checkpoints/
+
+# Downloaded/generated data - can be large and easy to re-download, so we keep it off GitHub
+data/*
+!data/.gitkeep
