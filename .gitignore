@@ -11,3 +11,7 @@ __pycache__/
 # Downloaded/generated data - can be large and easy to re-download, so we keep it off GitHub
 data/*
 !data/.gitkeep
+
+# Trained model weights - regeneratable by rerunning the training notebook
+models/*
+!models/.gitkeep
