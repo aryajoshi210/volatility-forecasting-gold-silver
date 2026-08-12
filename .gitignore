@@ -4,6 +4,7 @@ venv/
 # Python cache files - auto-generated, not real source code
 __pycache__/
 *.pyc
+.pytest_cache/
 
 # Jupyter notebook checkpoints - auto-generated backup copies
 .ipynb_checkpoints/
