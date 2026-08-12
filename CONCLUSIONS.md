@@ -1,81 +1,105 @@
-# Gold & Silver Volatility Forecasting — Project Conclusions
+# Gold & Silver Volatility Forecasting — Project Summary
 
-## What was built
+## The goal
 
-1. **Data pipeline** — daily gold and silver futures prices from Yahoo Finance, 2010–2026, converted to daily returns.
-2. **GARCH(1,1) baseline** — fitted, forecasted, and honestly backtested out-of-sample for both metals.
-3. **A transformer model, built from scratch in PyTorch** — windowed data pipeline, self-attention architecture, trained, debugged, and rigorously compared against GARCH and simple baselines, for both metals.
-4. **`src/` and `tests/`** — the windowing logic and model architecture extracted into reusable modules (`src/windowing.py`, `src/model.py`), with a pytest suite (9 tests) guarding shapes, output positivity, no-lookahead-leakage in the windowing, and the model's parameter count.
+Forecast how volatile gold and silver futures will be — not which direction prices move, but *how big* the daily swings are likely to be. Two approaches were built and compared: **GARCH**, a classic, simple statistical model, and a **transformer**, a modern neural network built from scratch.
 
-## The GARCH baseline results
+---
 
-| | Gold | Silver |
+## Part 1: What was actually built, in order
+
+**1. Project setup** — a Python environment, GitHub version control, and a `save.bat` shortcut for committing progress in one command.
+
+**2. Real data** — daily gold and silver futures prices downloaded from Yahoo Finance, 2010 to 2026 (~4,170 trading days each), converted into daily percentage returns — the actual number both models work with.
+
+**3. The GARCH baseline** — a well-established statistical model that estimates volatility using just 4 numbers, based on the idea that "yesterday's shock and yesterday's volatility predict today's volatility." Fitted, then genuinely *forecast* forward, then honestly *backtested* on data it had never seen. Result: GARCH beat a naive "volatility never changes" guess by **2.6% (gold)** and **3.5% (silver)** — modest, but real.
+
+**4. The transformer** — a neural network built piece by piece: turning each day's return into a richer number, tagging each day with its position in a 30-day window, running that window through a self-attention mechanism (the part that lets the model decide for itself which past days matter most), and producing one final number — tomorrow's predicted volatility. About 17,000 tunable values in total, trained on real data.
+
+**5. `src/` and `tests/`** — the reusable pieces of code (the windowing logic and the model itself) were pulled out into proper files, with a set of automated tests (9, all passing) that check things like "the model never predicts negative volatility" and "a window never accidentally contains the value it's trying to predict."
+
+---
+
+## Part 2: What went wrong, and how each problem was actually found and fixed
+
+This is the most useful part to remember — the project didn't go smoothly in a straight line, and finding out *why* something wasn't working was most of the actual effort.
+
+### Problem 1: the transformer learned almost nothing
+
+After training for 100 rounds, the model's predictions barely varied at all — regardless of what the input data actually showed, it just guessed something close to the overall average every time. This wasn't obvious from the loss numbers alone; it was confirmed by directly comparing *how much the predictions varied* against *how much real volatility varies*. The predictions moved only about **9%** as much as real volatility does — a clear sign the model had taken a lazy shortcut instead of genuinely learning.
+
+### Problem 2: the first fix attempt didn't work
+
+The natural first guess was that the training step size (the "learning rate") was too large, causing the model to overshoot better solutions. Lowering it and retraining barely changed anything (9% → 11%) — so that guess turned out to be wrong, or at least not the main issue. Important lesson here: **a plausible-sounding fix still needs to be checked, not assumed to have worked.**
+
+### Problem 3: was this actually a bug, or just a hard problem?
+
+To find out, an even simpler model — a basic linear regression using just "how volatile has this metal been recently" as its only input — was tested on the same data. It also could barely beat guessing the average. This was the turning point: it showed the transformer's weak performance wasn't a training bug at all — daily volatility is genuinely very noisy and hard to predict, for *any* model, on that stretch of data.
+
+### Problem 4: the first GARCH-vs-transformer comparison was unfair
+
+The transformer had been scored on a different date range than GARCH — comparing two different time periods, not a fair fight. Fixing this and re-scoring both models on the *exact same* dates flipped the picture: the transformer suddenly looked *better* than GARCH.
+
+### Problem 5: an even subtler leak was hiding in that "better" result
+
+Digging further, part of that shared test period had quietly been used as the transformer's own *validation* set — the data used to decide which version of the model to keep during training. That's not full cheating, but it's not a completely fair, blind test either. Retraining one more time, with the test period fully sealed off from every stage of training, produced the final, trustworthy numbers.
+
+**The takeaway from this whole chain:** every one of these problems looked, at first glance, like a different thing — bad training, needs more time, needs a different learning rate, unfair comparison — and the only way to actually find the real explanation each time was to test a specific, concrete hypothesis and look at real evidence, rather than guessing and moving on.
+
+---
+
+## Part 3: The final, honest results
+
+Both models were re-run on **silver** too, using everything learned from gold, to check the findings weren't a fluke of one dataset. They weren't — the same pattern showed up both times.
+
+**Gold** (test period: 2023–2026)
+
+| Model | Error (RMSE) | Improvement over "just guess the average" |
 |---|---|---|
-| omega (baseline floor) | 0.019 | 0.041 |
-| alpha (reaction to shocks) | 0.053 | 0.051 |
-| beta (persistence) | 0.931 | 0.940 |
-| Backtest RMSE improvement over naive | +2.63% | +3.55% |
+| Simple linear regression (1 input: recent volatility) | 0.879 | **+6.1%** |
+| GARCH | 0.903 | +3.5% |
+| Transformer | 0.905 | +3.3% |
+| Naive guess | 0.936 | 0% |
 
-Both metals showed real, if modest, volatility clustering that GARCH could exploit — confirming the core premise of the whole project before the transformer was ever built.
+**Silver** (same test period)
 
-## The transformer: what actually happened, honestly (gold)
-
-**First training attempt collapsed.** After 100 epochs, the model had essentially learned to predict close to the average volatility regardless of input — its predictions varied only ~9% as much as real volatility does. Diagnosed concretely by comparing prediction spread to actual spread, not just by eyeballing loss curves.
-
-**Lowering the learning rate didn't fix it** (9% → 11% of real spread — no meaningful change). This ruled out the first, most obvious hypothesis.
-
-**A baseline sanity check clarified what was really going on.** Testing a plain linear regression on the same data revealed that even the simplest possible model — one feature, "recent realized volatility predicts tomorrow's volatility" — could only beat naive by about 0.5% on that particular validation period. This showed the "collapse" wasn't a transformer-specific bug; it was a response to a genuinely faint, noisy signal in that stretch of data.
-
-**A methodology bug was caught and fixed.** The first head-to-head comparison against GARCH used mismatched time periods (transformer scored on 2021–2024, GARCH scored on 2023–2026) — an unfair comparison. Re-scoring on GARCH's *exact* test period initially showed the transformer beating GARCH — but that comparison still had a subtle leak: part of GARCH's test period had been used as the transformer's *validation* set for picking its best training checkpoint. Retraining with the test boundary pinned to the exact same date GARCH used (no validation/test overlap at all) produced the final, fully clean result.
-
-**Silver's transformer was built applying these lessons directly** — correct date-aligned split and the fixed learning rate from the start — and confirmed the same pattern reliably reproduces on a second, independent asset.
-
-## The final, honest scoreboard — both metals (test period: 2023-04-12 to 2026-08-05, zero data leakage)
-
-**Gold:**
-
-| Model | RMSE | Improvement over naive |
+| Model | Error (RMSE) | Improvement over "just guess the average" |
 |---|---|---|
-| Linear regression (1 feature: recent realized vol) | 0.8786 | **+6.08%** |
-| GARCH(1,1) | 0.9032 | +3.45% |
-| Transformer | 0.9046 | +3.30% |
-| Naive (flat average) | 0.9355 | 0% |
-| Linear regression (30 raw values) | 0.9394 | -0.42% |
+| Simple linear regression (1 input: recent volatility) | 1.892 | **+10.6%** |
+| GARCH | 2.004 | +5.3% |
+| Transformer | 2.012 | +5.0% |
+| Naive guess | 2.117 | 0% |
 
-**Silver:**
+**In plain terms:** the transformer and GARCH ended up performing almost identically on both metals — GARCH very slightly ahead each time. And the simplest model of all — a single number (recent volatility) plugged into basic linear regression — beat both of them, clearly, on both metals.
 
-| Model | RMSE | Improvement over naive |
-|---|---|---|
-| Linear regression (1 feature: recent realized vol) | 1.8918 | **+10.63%** |
-| GARCH(1,1) | 2.0044 | +5.31% |
-| Transformer | 2.0116 | +4.97% |
-| Linear regression (30 raw values) | 2.1063 | +0.50% |
-| Naive (flat average) | 2.1168 | 0% |
+---
 
-## What this actually means
+## Part 4: What this actually means
 
-- **The pattern is consistent and reproducible across two independent assets**, which makes it trustworthy rather than a fluke of one dataset. In both cases: `Linear (1 feature) > GARCH > Transformer > Naive`, with GARCH and the transformer landing within a fraction of a percent of each other every time.
-- **The transformer and GARCH are essentially tied** — GARCH marginally ahead in both metals, well within the noise of a single test period. The transformer's added complexity (17,000+ parameters, attention, multi-day context) did not translate into a meaningful edge over a model with just 4 parameters.
-- **A one-line linear regression beat both of them, by a clear margin, on both metals.** The single strongest predictor of tomorrow's volatility, among everything tried, was simply "how volatile was this metal recently" — fed through the simplest possible model. Silver's edge for this approach (+10.63%) was even larger than gold's (+6.08%).
-- **This is a real, legitimate finding, not a failed project.** It's a concrete, twice-replicated demonstration of the bias-variance tradeoff: on a dataset this size (~2,800–3,300 training examples), a flexible, high-capacity model has no inherent advantage over models with the right structural assumptions already built in — and can actually underperform a well-chosen simple baseline.
-- **All three real models (linear, GARCH, transformer) beat naive on both metals**, confirming real, learnable volatility clustering exists in daily precious-metal returns — just that a plain transformer, at this scale of data, isn't the most efficient way to capture it.
+- **More complexity didn't win.** The transformer has thousands of tunable values and a genuinely sophisticated mechanism for deciding what matters in the data. GARCH has 4. The simple linear model has 2. On this amount of data, none of that extra sophistication translated into better forecasts — if anything, the simplest approach won.
+- **This is a real result, not a failure.** It's a clean, twice-confirmed demonstration of something true throughout machine learning: a flexible model needs *enough data* to find patterns reliably, and without that, a simpler model with sensible built-in assumptions can beat it. ~2,800–3,300 training examples turned out to be enough for GARCH and linear regression to work well, but not enough to give the transformer a real edge.
+- **All three real models did beat the naive guess, on both metals.** So the underlying idea of the whole project — that volatility clusters into calm and turbulent periods, and that's learnable — is genuinely true. It just didn't require a transformer to capture it.
 
-## Practical lessons from the process itself
+---
 
-- **Fitting ≠ forecasting ≠ backtesting.** All three are distinct, necessary steps — a model that fits history well tells you nothing about its forecasting ability until it's honestly tested on unseen data.
-- **Diagnose failures with evidence, not guesses.** The first fix attempt (lowering the learning rate) was a reasonable hypothesis that turned out to be wrong — caught quickly by checking prediction spread directly, rather than assuming the fix worked because loss numbers moved slightly.
-- **Data leakage is subtle and easy to miss in time series**, even when a train/test split looks correct. Using a validation set for checkpoint selection during training is standard practice — but if that validation period overlaps with the actual comparison window, it quietly inflates results.
-- **Always benchmark against naive and simple baselines**, not just the sophisticated model. The simplest model in this whole project turned out to be the best one on both assets tested.
-- **Replicate before trusting a result.** The gold-only finding could plausibly have been a one-off quirk of that specific test period; running the identical process on silver and seeing the same ranking hold up is what turns "interesting result" into "reliable conclusion."
+## Part 5: Key things learned, worth remembering
+
+1. **Fitting, forecasting, and backtesting are three different things.** A model can fit history perfectly and still be worthless at predicting anything new — the only real test is honest, out-of-sample performance.
+2. **Diagnose with evidence, not guesses.** Every fix attempted in this project was checked against real numbers afterward, and more than one "obvious" fix turned out to be wrong.
+3. **Data leakage in time series is sneaky.** Even a split that looks correct at first glance can secretly let information about the future leak into training — it happened twice here, in two different subtle ways, and both had to be caught deliberately.
+4. **Always test a dumb baseline.** The simplest possible model in this entire project ended up being the best one — without testing it, that would never have been discovered.
+5. **One result isn't a conclusion — a repeated result is.** The gold-only finding could have been a coincidence of that specific test period; only after seeing the identical pattern on silver did it become a trustworthy conclusion.
+
+---
 
 ## Project status: complete
 
-- Data pipeline, GARCH baseline (fit/forecast/backtest), and transformer (data prep/build/train/diagnose/evaluate) are all done for **both gold and silver**.
-- `src/` holds the reusable windowing and model code; `tests/` has a passing pytest suite (9/9) guarding both.
-- Every notebook runs end-to-end and is version-controlled on GitHub.
+- Data pipeline, GARCH (fit + forecast + backtest), and transformer (build + train + diagnose + evaluate) are all finished for **both gold and silver**.
+- Reusable code lives in `src/`, backed by a passing test suite in `tests/`.
+- Everything is version-controlled and pushed to GitHub, with every notebook running end-to-end.
 
-## Possible future extensions (not required, not started)
+## Ideas for extending this further (not done, not required)
 
-- Features with exponentially-decaying weight (closer to what GARCH does structurally) instead of a flat 30-day window.
-- Asymmetric GARCH variants (GJR-GARCH/EGARCH) to test whether the "big drops matter more than big rallies" effect adds anything here.
-- A longer input window or more training data, to see whether the transformer's disadvantage narrows with scale.
+- Give the model a feature that decays smoothly over time (closer to what GARCH does structurally), instead of a flat 30-day window.
+- Try GARCH variants that treat big drops and big rallies differently (GJR-GARCH/EGARCH).
+- Test whether the transformer's disadvantage shrinks with a longer window or more training data.
