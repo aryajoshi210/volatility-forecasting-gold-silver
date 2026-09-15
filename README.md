@@ -1,10 +1,10 @@
 # Volatility Forecasting: Gold and Silver Futures
 
-Does a transformer neural network forecast commodity volatility better than a classical econometric model?
+An end-to-end volatility forecasting system for gold and silver futures, built to answer one question properly: does a transformer neural network beat a classical econometric model at forecasting commodity volatility?
 
-I built both from scratch, designed the evaluation myself, and tested the question honestly across two independent assets. The answer is no. A one-variable linear regression beat both of them.
+Four models, two assets, one leak-free test set. I built the transformer from first principles in PyTorch, fitted a GARCH(1,1) baseline, designed the evaluation framework myself, and confirmed the answer by rerunning the entire pipeline on a second metal.
 
-That result is the point of the project. What follows is how I got to it and why I trust it.
+The answer is no, and a one-variable linear regression beat both. It reproduced on silver after being established on gold, which is what makes it worth reporting.
 
 ## Results
 
@@ -28,29 +28,35 @@ Test period 2023-04-12 to 2026-08-05, held out from all training and model selec
 | Transformer (~17k params) | 2.012 | +5.0% |
 | Naive baseline | 2.117 | — |
 
-The transformer and GARCH are effectively tied. The simplest model wins on both assets. The ranking reproduced independently on silver after being established on gold.
+Every model beats the naive baseline. The transformer and GARCH are effectively tied. The simplest model wins on both assets.
 
-## What this means
+## What I learned
 
-This is a clean demonstration of the bias-variance tradeoff. A flexible, high-capacity model had no advantage over simpler, more structurally appropriate ones on a modest dataset of roughly 2,800 to 3,300 training examples, and was beaten by a well-chosen simple baseline.
+**Model capacity has to be earned.** A 17,000-parameter transformer had no edge over a three-parameter econometric model on 2,800 to 3,300 training examples. I had read about the bias-variance tradeoff; measuring it on my own data is what made it stick.
 
-The value here is not a winning model. It is that the comparison is fair, the failure modes were found rather than hidden, and the conclusion follows from evidence rather than from what I hoped to find.
+**A baseline is a measuring instrument, not a formality.** I wrote the linear regression as a debugging control, to work out whether weak performance was my bug or the data's limit. It answered that question and then won the study. I now build the simplest possible model first, every time, because it is the only thing that tells you what your complex model is actually worth.
+
+**Loss curves hide failures.** My transformer's training loss looked healthy while its predictions varied only about 9% as much as the real data. Comparing the distribution of predictions against the distribution of the target is what exposed it. I check that now before I trust any training run.
+
+**A plausible fix is not a verified fix.** Lowering the learning rate is the textbook first response to that failure. I tried it, measured it, and it did not work. Knowing the difference between a fix you reasoned your way to and one you have evidence for changed how I debug.
+
+**Leakage hides in the validation set.** My first comparison used mismatched time periods. After fixing that, I found the transformer's validation set, which was selecting the model checkpoint, overlapped the test period. Model selection leaks just as badly as training does, and it is much easier to miss.
+
+**Replication is cheap insurance.** Rerunning everything on silver cost me a day and turned a one-dataset curiosity into a finding I can defend.
+
+## What I built
+
+**A transformer from first principles in PyTorch.** Input embedding, sinusoidal positional encoding, two layers of four-head self-attention, feed-forward layers, and a softplus output head constraining forecasts to be non-negative, which volatility must be. Custom training loop with Adam.
+
+**A GARCH(1,1) baseline** fitted by maximum likelihood, forward-forecast and backtested out of sample on both metals.
+
+**An evaluation framework built to be fair.** Sliding 30-day windows, normalisation statistics computed on training data only, and a test boundary pinned to a fixed calendar date so the transformer and GARCH are scored on identical periods with zero overlap into model selection.
+
+**A closed-form least-squares regression with no ML library at all,** as a control to isolate model bugs from genuine signal limits.
+
+**Tested, reusable code.** Windowing and model logic extracted into `src/` modules, backed by a nine-test pytest suite covering pipeline correctness, absence of leakage in the windowing logic, and guaranteed-positive outputs. Full commit history, sixteen documented notebooks, one per pipeline stage.
 
 Full narrative write-up in [CONCLUSIONS.md](CONCLUSIONS.md).
-
-## How the conclusion was reached
-
-The first version of this project produced a much more flattering result. Most of the work was finding out why it was wrong.
-
-**Diagnosed a silent failure.** After initial training the transformer's predictions varied only about 9% as much as the real data. Loss curves looked fine. I caught it by comparing prediction variance against actual variance directly, which is the check that mode collapse actually fails.
-
-**Tested a fix instead of assuming it.** Lowering the learning rate is the standard first response and it did not resolve the collapse. Recording that it failed mattered more than trying it.
-
-**Isolated the root cause with a control.** I wrote a closed-form least-squares regression with no ML library at all, on the same data, to separate "my transformer has a bug" from "the signal is genuinely weak". It was the second one. That control then turned out to be the best model in the study.
-
-**Found two data leakage bugs in my own evaluation.** The first comparison used mismatched time periods for GARCH and the transformer. After fixing that, the transformer's validation set, which was selecting the model checkpoint, overlapped the test period. I re-architected the split to pin the test boundary to a fixed calendar date with zero overlap.
-
-**Replicated the finding.** The entire pipeline was rerun independently on silver to check the result was not a fluke of one dataset. Same ranking.
 
 ## Repository
 
@@ -78,4 +84,4 @@ Then work through `notebooks/` in numerical order. Data is pulled from Yahoo Fin
 
 ## Built with
 
-Python, pandas, NumPy, matplotlib. `arch` for GARCH(1,1) fitted by maximum likelihood. PyTorch for the transformer, written from first principles: input embedding, sinusoidal positional encoding, two layers of four-head self-attention, feed-forward layers, and a softplus output head to constrain forecasts to be non-negative. Evaluation uses sliding 30-day windows with normalisation statistics computed on training data only.
+Python, pandas, NumPy, matplotlib, PyTorch, `arch`, pytest, Git.
